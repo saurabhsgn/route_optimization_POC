@@ -1,0 +1,108 @@
+version: "3.9"
+
+services:
+  # ── PostgreSQL + PostGIS ──────────────────────────────────
+  postgres:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: route_optimizer
+      POSTGRES_USER: optimizer
+      POSTGRES_PASSWORD: optimizer_secret
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U optimizer -d route_optimizer"]
+      interval: 5s
+      retries: 5
+
+  # ── Redis ─────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 5
+
+  # ── Zookeeper (Kafka dependency) ──────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  # ── Kafka ─────────────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      retries: 10
+      start_period: 30s
+
+  # ── Valhalla (routing engine) ─────────────────────────────
+  valhalla:
+    image: ghcr.io/gis-ops/docker-valhalla/valhalla:latest
+    ports:
+      - "8002:8002"
+    environment:
+      tile_urls: "https://download.geofabrik.de/north-america/us/georgia-latest.osm.pbf"
+      serve_tiles: "True"
+      build_elevation: "False"
+      build_admins: "True"
+      build_time_zones: "True"
+      use_tiles_ignore_pbf: "True"
+    volumes:
+      - valhalla_tiles:/custom_files
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8002/status"]
+      interval: 15s
+      retries: 20
+      start_period: 120s   # tile building takes time on first start
+
+  # ── Pelias Geocoder (optional — uses Nominatim fallback) ──
+  # Pelias requires multiple services + data import.
+  # For the POC, we use Nominatim as the geocoding fallback.
+  # To enable Pelias in production, see: https://github.com/pelias/docker
+  #
+  # pelias-elasticsearch:
+  #   image: pelias/elasticsearch:7.17.14
+  #   ports:
+  #     - "9200:9200"
+  #   environment:
+  #     - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+  #   volumes:
+  #     - pelias_es:/usr/share/elasticsearch/data
+  #
+  # pelias-api:
+  #   image: pelias/api:latest
+  #   depends_on:
+  #     - pelias-elasticsearch
+  #   ports:
+  #     - "4000:4000"
+  #   environment:
+  #     - PELIAS_CONFIG=/etc/pelias.json
+
+volumes:
+  pgdata:
+  redisdata:
+  valhalla_tiles:

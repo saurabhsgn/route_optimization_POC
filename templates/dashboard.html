@@ -1,0 +1,780 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Route Optimizer POC</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        .loader{border:4px solid #e5e7eb;border-top:4px solid #3b82f6;border-radius:50%;width:32px;height:32px;animation:spin .8s linear infinite;display:inline-block}
+        @keyframes spin{to{transform:rotate(360deg)}}
+        .card{background:white;border-radius:12px;padding:20px;box-shadow:0 1px 6px rgba(0,0,0,.08)}
+        .tab-btn{padding:8px 20px;border-radius:8px 8px 0 0;cursor:pointer;font-weight:600;transition:.2s}
+        .tab-btn.active{background:#3b82f6;color:white}
+        .tab-btn:not(.active){background:#e5e7eb;color:#374151}
+        .tab-content{display:none}.tab-content.active{display:block}
+        .mode-btn{padding:8px 24px;border-radius:8px;cursor:pointer;font-weight:600;transition:.2s;border:2px solid #e5e7eb}
+        .mode-btn.active{background:#1e40af;color:white;border-color:#1e40af}
+        .mode-btn:not(.active){background:white;color:#374151}
+        .mode-btn:not(.active):hover{border-color:#3b82f6}
+        .inp{border:1px solid #d1d5db;border-radius:8px;padding:6px 10px;font-size:14px;width:100%}
+        .inp:focus{outline:none;border-color:#3b82f6;box-shadow:0 0 0 2px rgba(59,130,246,0.15)}
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+
+<!-- Header -->
+<header class="bg-gradient-to-r from-blue-700 to-indigo-800 text-white py-4 px-6 shadow-lg">
+    <div class="max-w-7xl mx-auto flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-bold">Route Optimizer POC</h1>
+            <p class="text-blue-200 text-sm">Delivery route planning &mdash; ETA-focused optimization (USA)</p>
+        </div>
+        <div id="status-badge" class="text-sm bg-blue-600 px-3 py-1 rounded-full">Ready</div>
+    </div>
+</header>
+
+<div class="max-w-7xl mx-auto p-4 space-y-4">
+
+    <!-- Mode Selector -->
+    <div class="card">
+        <div class="flex items-center gap-3 mb-4">
+            <span class="font-bold text-gray-700">Input Mode:</span>
+            <button class="mode-btn active" onclick="setMode('random')" id="mode-random">Random Data</button>
+            <button class="mode-btn" onclick="setMode('manual')" id="mode-manual">Manual / Excel Input</button>
+        </div>
+
+        <!-- ========== RANDOM MODE ========== -->
+        <div id="panel-random">
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-4 items-end">
+                <div>
+                    <label class="block text-sm font-medium text-gray-600 mb-1">Orders</label>
+                    <input type="range" id="inp-orders" min="3" max="50" value="15"
+                        class="w-full" oninput="document.getElementById('lbl-orders').textContent=this.value">
+                    <span id="lbl-orders" class="text-sm font-bold text-blue-600">15</span>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-600 mb-1">Drivers</label>
+                    <input type="number" id="inp-drivers" min="1" max="10" value="3" class="inp text-center">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-600 mb-1">Vehicles</label>
+                    <input type="number" id="inp-vehicles" min="1" max="10" value="3" class="inp text-center">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-600 mb-1">Scenario</label>
+                    <select id="inp-scenario" class="inp">
+                        <option value="normal">Normal</option>
+                        <option value="peak">Peak Hour</option>
+                    </select>
+                </div>
+                <div>
+                    <button onclick="runRandomPipeline()" id="btn-run"
+                        class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg font-semibold transition w-full">
+                        Generate &amp; Optimize
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== MANUAL MODE ========== -->
+        <div id="panel-manual" class="hidden">
+
+            <!-- Excel Upload Section -->
+            <div class="bg-indigo-50 rounded-lg p-4 mb-4">
+                <h3 class="font-bold text-sm text-indigo-800 mb-2">Upload from Excel</h3>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Select .xlsx file</label>
+                        <input type="file" id="m-excel" accept=".xlsx,.xls"
+                            class="w-full text-sm file:mr-3 file:py-1.5 file:px-4 file:rounded-lg file:border-0
+                            file:bg-indigo-600 file:text-white file:font-semibold file:cursor-pointer
+                            hover:file:bg-indigo-700">
+                    </div>
+                    <div>
+                        <button onclick="uploadExcel()" id="btn-upload"
+                            class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1.5 rounded-lg font-semibold text-sm w-full">
+                            Upload &amp; Parse
+                        </button>
+                    </div>
+                    <div>
+                        <a href="/api/template"
+                            class="inline-block bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-1.5 rounded-lg font-semibold text-sm text-center w-full">
+                            Download Template (.xlsx)
+                        </a>
+                    </div>
+                </div>
+                <p class="text-xs text-indigo-600 mt-2">Columns: customer_name, address, priority, delivery_datetime, latitude, longitude</p>
+            </div>
+
+            <!-- Single Order Form -->
+            <div class="bg-blue-50 rounded-lg p-4 mb-4">
+                <h3 class="font-bold text-sm text-blue-800 mb-3">Add Order Manually</h3>
+                <div class="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Customer Name</label>
+                        <input type="text" id="m-name" placeholder="e.g. John Smith" class="inp text-sm">
+                    </div>
+                    <div class="md:col-span-2">
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Delivery Address (USA)</label>
+                        <input type="text" id="m-address" placeholder="e.g. 350 5th Ave, New York, NY" class="inp text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Delivery By</label>
+                        <input type="datetime-local" id="m-datetime" class="inp text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Priority</label>
+                        <select id="m-priority" class="inp text-sm">
+                            <option value="HIGH">HIGH</option>
+                            <option value="MEDIUM" selected>MEDIUM</option>
+                            <option value="LOW">LOW</option>
+                        </select>
+                    </div>
+                    <div>
+                        <button onclick="addManualOrder()"
+                            class="bg-green-600 hover:bg-green-700 text-white px-4 py-1.5 rounded-lg font-semibold text-sm w-full">
+                            + Add
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bulk Paste -->
+            <div class="bg-gray-50 rounded-lg p-4 mb-4">
+                <h3 class="font-bold text-sm text-gray-700 mb-2">Bulk Add (paste addresses, one per line)</h3>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                    <div class="md:col-span-2">
+                        <textarea id="m-bulk" rows="4" placeholder="350 5th Ave, New York, NY&#10;1600 Broadway, New York, NY&#10;200 Central Park West, New York, NY"
+                            class="inp text-sm font-mono"></textarea>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Priority (all)</label>
+                        <select id="m-bulk-priority" class="inp text-sm mb-2">
+                            <option value="HIGH">HIGH</option>
+                            <option value="MEDIUM" selected>MEDIUM</option>
+                            <option value="LOW">LOW</option>
+                        </select>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Delivery By (all)</label>
+                        <input type="datetime-local" id="m-bulk-datetime" class="inp text-sm">
+                    </div>
+                    <div class="space-y-2">
+                        <button onclick="bulkAdd()"
+                            class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1.5 rounded-lg font-semibold text-sm w-full">
+                            Add All
+                        </button>
+                        <button onclick="loadSampleAddresses()"
+                            class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-1.5 rounded-lg font-semibold text-sm w-full">
+                            Load Alpharetta Samples
+                        </button>
+                        <button onclick="clearManualOrders()"
+                            class="bg-red-500 hover:bg-red-600 text-white px-4 py-1.5 rounded-lg font-semibold text-sm w-full">
+                            Clear All
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Manual Orders List -->
+            <div class="mb-4">
+                <div class="flex items-center justify-between mb-2">
+                    <h3 class="font-bold text-sm text-gray-700">Orders (<span id="m-count">0</span>)</h3>
+                </div>
+                <div class="overflow-x-auto max-h-64 overflow-y-auto border rounded-lg">
+                    <table class="w-full text-xs">
+                        <thead class="bg-gray-50 sticky top-0">
+                            <tr>
+                                <th class="px-2 py-1.5 text-left">#</th>
+                                <th class="px-2 py-1.5 text-left">Customer</th>
+                                <th class="px-2 py-1.5 text-left">Address</th>
+                                <th class="px-2 py-1.5 text-center">Priority</th>
+                                <th class="px-2 py-1.5 text-center">Delivery By</th>
+                                <th class="px-2 py-1.5 text-center">Coords</th>
+                                <th class="px-2 py-1.5 text-center">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="m-orders-table"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Drivers/Vehicles + Optimize -->
+            <div class="grid grid-cols-3 gap-4 items-end">
+                <div>
+                    <label class="block text-sm font-medium text-gray-600 mb-1">Drivers</label>
+                    <input type="number" id="m-drivers" min="1" max="10" value="3" class="inp text-center">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-600 mb-1">Vehicles</label>
+                    <input type="number" id="m-vehicles" min="1" max="10" value="3" class="inp text-center">
+                </div>
+                <div>
+                    <button onclick="runManualPipeline()" id="btn-manual-optimize"
+                        class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg font-semibold transition w-full">
+                        Geocode &amp; Optimize
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading -->
+    <div id="loading" class="hidden text-center py-8">
+        <div class="loader mx-auto mb-3"></div>
+        <p id="loading-text" class="text-gray-500">Working...</p>
+    </div>
+
+    <!-- Results Summary Cards -->
+    <div id="summary-section" class="hidden">
+        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+            <div class="card text-center">
+                <div class="text-2xl font-bold text-blue-600" id="s-routes">-</div>
+                <div class="text-xs text-gray-500">Routes</div>
+            </div>
+            <div class="card text-center">
+                <div class="text-2xl font-bold text-green-600" id="s-assigned">-</div>
+                <div class="text-xs text-gray-500">Assigned</div>
+            </div>
+            <div class="card text-center">
+                <div class="text-2xl font-bold text-red-500" id="s-unassigned">-</div>
+                <div class="text-xs text-gray-500">Unassigned</div>
+            </div>
+            <div class="card text-center">
+                <div class="text-2xl font-bold" id="s-sla">-</div>
+                <div class="text-xs text-gray-500">SLA %</div>
+            </div>
+            <div class="card text-center">
+                <div class="text-2xl font-bold text-purple-600" id="s-distance">-</div>
+                <div class="text-xs text-gray-500">Total km</div>
+            </div>
+            <div class="card text-center">
+                <div class="text-2xl font-bold text-orange-500" id="s-duration">-</div>
+                <div class="text-xs text-gray-500">Total min</div>
+            </div>
+            <div class="card text-center">
+                <div class="text-2xl font-bold text-indigo-600" id="s-time">-</div>
+                <div class="text-xs text-gray-500">Opt. Time (s)</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Geocode Errors -->
+    <div id="geocode-errors" class="hidden card border-l-4 border-yellow-400 bg-yellow-50">
+        <h3 class="font-bold text-yellow-800 mb-2">Geocoding Warnings</h3>
+        <ul id="geocode-error-list" class="text-sm text-yellow-700 list-disc list-inside"></ul>
+    </div>
+
+    <!-- Tabs -->
+    <div id="tabs-section" class="hidden">
+        <div class="flex gap-1 mb-0">
+            <button class="tab-btn active" onclick="switchTab('map')">Map</button>
+            <button class="tab-btn" onclick="switchTab('routes')">Routes</button>
+            <button class="tab-btn" onclick="switchTab('charts')">Analytics</button>
+            <button class="tab-btn" onclick="switchTab('simulation')">Simulation</button>
+        </div>
+
+        <!-- Map Tab -->
+        <div id="tab-map" class="tab-content active card" style="border-radius:0 12px 12px 12px">
+            <div class="text-xs text-gray-500 mb-2">Each route has a unique color. Solid lines = outbound, dashed = return trip. Click markers for details.</div>
+            <iframe id="map-frame" src="" style="width:100%;height:600px;border:none;border-radius:8px"></iframe>
+        </div>
+
+        <!-- Routes Tab -->
+        <div id="tab-routes" class="tab-content card" style="border-radius:0 12px 12px 12px">
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-3 py-2 text-left">Route</th>
+                            <th class="px-3 py-2 text-left">Direction</th>
+                            <th class="px-3 py-2 text-left">Driver</th>
+                            <th class="px-3 py-2 text-left">Vehicle</th>
+                            <th class="px-3 py-2 text-center">Orders</th>
+                            <th class="px-3 py-2 text-right">Distance (km)</th>
+                            <th class="px-3 py-2 text-right">Duration (min)</th>
+                            <th class="px-3 py-2 text-right">SLA %</th>
+                        </tr>
+                    </thead>
+                    <tbody id="routes-table"></tbody>
+                </table>
+            </div>
+            <h3 class="font-bold mt-6 mb-2">Delivery Sequence (ordered by ETA)</h3>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-3 py-2 text-left">Route</th>
+                            <th class="px-3 py-2 text-center">#</th>
+                            <th class="px-3 py-2 text-left">Order</th>
+                            <th class="px-3 py-2 text-left">Customer</th>
+                            <th class="px-3 py-2 text-left">Address</th>
+                            <th class="px-3 py-2 text-center">Priority</th>
+                            <th class="px-3 py-2 text-right">ETA (min)</th>
+                            <th class="px-3 py-2 text-right">SLA (min)</th>
+                            <th class="px-3 py-2 text-center">SLA Met</th>
+                            <th class="px-3 py-2 text-center">Trip</th>
+                        </tr>
+                    </thead>
+                    <tbody id="stops-table"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Charts Tab -->
+        <div id="tab-charts" class="tab-content card" style="border-radius:0 12px 12px 12px">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div><h3 class="font-bold mb-2 text-center">SLA Compliance</h3><canvas id="chart-sla" height="260"></canvas></div>
+                <div><h3 class="font-bold mb-2 text-center">Priority Distribution</h3><canvas id="chart-priority" height="260"></canvas></div>
+                <div class="md:col-span-2"><h3 class="font-bold mb-2 text-center">Route Performance</h3><canvas id="chart-routes" height="200"></canvas></div>
+                <div class="md:col-span-2"><h3 class="font-bold mb-2 text-center">Delivery Timeline (ETA vs SLA Deadline)</h3><canvas id="chart-timeline" height="220"></canvas></div>
+            </div>
+        </div>
+
+        <!-- Simulation Tab -->
+        <div id="tab-simulation" class="tab-content card" style="border-radius:0 12px 12px 12px">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="font-bold">Multi-Scenario Simulation</h3>
+                <button onclick="runSimulation()" id="btn-sim"
+                    class="bg-purple-600 hover:bg-purple-700 text-white px-5 py-2 rounded-lg font-semibold transition">
+                    Run Simulation
+                </button>
+            </div>
+            <p class="text-sm text-gray-500 mb-4">Tests 5 scenarios and compares SLA, assignment, and utilization.</p>
+            <div id="sim-loading" class="hidden text-center py-6">
+                <div class="loader mx-auto mb-2"></div>
+                <p class="text-gray-500">Running simulations...</p>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-3 py-2 text-left">Scenario</th>
+                            <th class="px-3 py-2 text-center">Orders</th>
+                            <th class="px-3 py-2 text-center">Drivers</th>
+                            <th class="px-3 py-2 text-center">Routes</th>
+                            <th class="px-3 py-2 text-center">Assigned</th>
+                            <th class="px-3 py-2 text-center">Unassigned</th>
+                            <th class="px-3 py-2 text-right">SLA %</th>
+                            <th class="px-3 py-2 text-right">Distance (km)</th>
+                            <th class="px-3 py-2 text-right">Opt Time (s)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sim-table"></tbody>
+                </table>
+            </div>
+            <div class="mt-6"><canvas id="chart-sim" height="200"></canvas></div>
+        </div>
+    </div>
+</div>
+
+<footer class="text-center text-xs text-gray-400 py-6">
+    Route Optimizer POC &mdash; OR-Tools VRP (ETA-focused) + FastAPI + Folium + OpenStreetMap Geocoding (USA)
+</footer>
+
+<script>
+// ==================== STATE ====================
+let manualOrders = [];
+let chartInstances = {};
+
+const ROUTE_COLORS = ['#FF0000','#0000FF','#008800','#FF8C00','#9400D3','#00CED1','#FF1493','#228B22','#FFD700','#4B0082'];
+
+const SAMPLE_ADDRESSES = [
+    "1000 North Point Cir, Alpharetta, GA 30022",
+    "2500 Old Milton Pkwy, Alpharetta, GA 30009",
+    "5335 Windward Pkwy, Alpharetta, GA 30004",
+    "11770 Haynes Bridge Rd, Alpharetta, GA 30009",
+    "6900 North Point Pkwy, Alpharetta, GA 30022",
+    "2960 Holcomb Bridge Rd, Roswell, GA 30076",
+    "1200 Alpharetta Hwy, Roswell, GA 30076",
+    "8305 Avalon Blvd, Alpharetta, GA 30009",
+    "10900 Crabapple Rd, Roswell, GA 30075",
+    "3000 Old Alabama Rd, Johns Creek, GA 30022",
+    "5927 State Bridge Rd, Johns Creek, GA 30097",
+    "6460 Windward Pkwy, Alpharetta, GA 30005",
+];
+
+// ==================== MODE SWITCH ====================
+function setMode(mode) {
+    document.getElementById('mode-random').classList.toggle('active', mode === 'random');
+    document.getElementById('mode-manual').classList.toggle('active', mode === 'manual');
+    document.getElementById('panel-random').classList.toggle('hidden', mode !== 'random');
+    document.getElementById('panel-manual').classList.toggle('hidden', mode !== 'manual');
+}
+
+// ==================== EXCEL UPLOAD ====================
+async function uploadExcel() {
+    const fileInput = document.getElementById('m-excel');
+    const file = fileInput.files[0];
+    if (!file) { alert('Please select an Excel file (.xlsx)'); return; }
+
+    const btn = document.getElementById('btn-upload');
+    btn.disabled = true; btn.textContent = 'Parsing...';
+
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await fetch('/api/upload-excel', { method: 'POST', body: formData });
+        const data = await res.json();
+
+        if (data.orders && data.orders.length > 0) {
+            data.orders.forEach(o => manualOrders.push(o));
+            renderManualTable();
+            alert(`Loaded ${data.count} orders from Excel. Review and click "Geocode & Optimize".`);
+        } else {
+            alert('No valid orders found in the file. Check column headers: customer_name, address, priority, delivery_datetime');
+        }
+    } catch(e) { alert('Upload error: ' + e.message); }
+
+    btn.disabled = false; btn.textContent = 'Upload & Parse';
+    fileInput.value = '';
+}
+
+// ==================== MANUAL ORDER MANAGEMENT ====================
+function addManualOrder() {
+    const address = document.getElementById('m-address').value.trim();
+    if (!address) { alert('Please enter a delivery address.'); return; }
+
+    const name = document.getElementById('m-name').value.trim();
+    const priority = document.getElementById('m-priority').value;
+    const dt = document.getElementById('m-datetime').value;
+
+    manualOrders.push({
+        customer_name: name || `Customer ${manualOrders.length + 1}`,
+        address,
+        priority,
+        delivery_datetime: dt || null,
+        latitude: null,
+        longitude: null
+    });
+
+    document.getElementById('m-name').value = '';
+    document.getElementById('m-address').value = '';
+    document.getElementById('m-datetime').value = '';
+    renderManualTable();
+}
+
+function bulkAdd() {
+    const text = document.getElementById('m-bulk').value.trim();
+    if (!text) { alert('Paste addresses first.'); return; }
+    const priority = document.getElementById('m-bulk-priority').value;
+    const dt = document.getElementById('m-bulk-datetime').value || null;
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    lines.forEach(addr => {
+        manualOrders.push({
+            customer_name: `Customer ${manualOrders.length + 1}`,
+            address: addr,
+            priority,
+            delivery_datetime: dt,
+            latitude: null,
+            longitude: null
+        });
+    });
+    document.getElementById('m-bulk').value = '';
+    renderManualTable();
+}
+
+function loadSampleAddresses() {
+    document.getElementById('m-bulk').value = SAMPLE_ADDRESSES.join('\n');
+}
+
+function removeManualOrder(idx) {
+    manualOrders.splice(idx, 1);
+    renderManualTable();
+}
+
+function clearManualOrders() {
+    manualOrders = [];
+    renderManualTable();
+}
+
+function renderManualTable() {
+    document.getElementById('m-count').textContent = manualOrders.length;
+    const priClasses = {
+        HIGH: 'bg-red-100 text-red-700',
+        MEDIUM: 'bg-yellow-100 text-yellow-700',
+        LOW: 'bg-green-100 text-green-700'
+    };
+    let html = '';
+    manualOrders.forEach((o, i) => {
+        const hasCoords = o.latitude != null && o.longitude != null;
+        const coordsCell = hasCoords
+            ? `<span class="text-green-600 font-bold" title="${o.latitude}, ${o.longitude}">Yes</span>`
+            : '<span class="text-gray-400">Geocode</span>';
+        const dtDisplay = o.delivery_datetime
+            ? new Date(o.delivery_datetime).toLocaleString('en-US', {month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})
+            : '<span class="text-gray-400">Auto</span>';
+
+        html += `<tr class="border-b hover:bg-gray-50">
+            <td class="px-2 py-1">${i + 1}</td>
+            <td class="px-2 py-1">${o.customer_name}</td>
+            <td class="px-2 py-1 text-xs max-w-[200px] truncate" title="${o.address}">${o.address}</td>
+            <td class="px-2 py-1 text-center"><span class="px-2 py-0.5 rounded-full text-xs font-bold ${priClasses[o.priority] || priClasses.MEDIUM}">${o.priority}</span></td>
+            <td class="px-2 py-1 text-center text-xs">${dtDisplay}</td>
+            <td class="px-2 py-1 text-center text-xs">${coordsCell}</td>
+            <td class="px-2 py-1 text-center"><button onclick="removeManualOrder(${i})" class="text-red-500 hover:text-red-700 text-xs font-bold">X</button></td>
+        </tr>`;
+    });
+    document.getElementById('m-orders-table').innerHTML = html || '<tr><td colspan="7" class="text-center text-gray-400 py-4">No orders added yet. Use form above, bulk paste, or upload Excel.</td></tr>';
+}
+
+// ==================== PIPELINES ====================
+async function runRandomPipeline() {
+    const btn = document.getElementById('btn-run');
+    btn.disabled = true; btn.textContent = 'Working...';
+    showLoading('Generating random orders (NYC area)...');
+
+    const orders = document.getElementById('inp-orders').value;
+    const drivers = document.getElementById('inp-drivers').value;
+    const vehicles = document.getElementById('inp-vehicles').value;
+    const scenario = document.getElementById('inp-scenario').value;
+
+    try {
+        await fetch(`/api/generate?num_orders=${orders}&num_drivers=${drivers}&num_vehicles=${vehicles}&scenario=${scenario}`, {method:'POST'});
+        showLoading('Optimizing routes (ETA-focused, up to 10s)...');
+        const res = await fetch('/api/optimize', {method:'POST'});
+        const data = await res.json();
+        hideGeocodeErrors();
+        renderResults(data);
+    } catch(e) { alert('Error: ' + e.message); }
+
+    btn.disabled = false; btn.textContent = 'Generate & Optimize';
+    hideLoading();
+}
+
+async function runManualPipeline() {
+    if (manualOrders.length === 0) { alert('Add at least one order first.'); return; }
+
+    const btn = document.getElementById('btn-manual-optimize');
+    btn.disabled = true; btn.textContent = 'Working...';
+
+    const needGeocode = manualOrders.filter(o => o.latitude == null).length;
+    if (needGeocode > 0) {
+        showLoading(`Geocoding ${needGeocode} addresses (~1 per second)...`);
+    } else {
+        showLoading('Optimizing routes...');
+    }
+
+    const drivers = document.getElementById('m-drivers').value;
+    const vehicles = document.getElementById('m-vehicles').value;
+
+    try {
+        const genRes = await fetch('/api/manual-orders', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                orders: manualOrders,
+                num_drivers: parseInt(drivers),
+                num_vehicles: parseInt(vehicles)
+            })
+        });
+        const genData = await genRes.json();
+
+        if (genData.geocode_errors && genData.geocode_errors.length > 0) {
+            showGeocodeErrors(genData.geocode_errors);
+        } else {
+            hideGeocodeErrors();
+        }
+
+        if (genData.count.orders === 0) {
+            alert('No addresses could be geocoded. Please check the addresses and try again.');
+            btn.disabled = false; btn.textContent = 'Geocode & Optimize';
+            hideLoading(); return;
+        }
+
+        showLoading(`Optimizing ${genData.count.orders} orders (ETA-focused)...`);
+        const optRes = await fetch('/api/optimize', {method:'POST'});
+        const data = await optRes.json();
+        renderResults(data);
+    } catch(e) { alert('Error: ' + e.message); }
+
+    btn.disabled = false; btn.textContent = 'Geocode & Optimize';
+    hideLoading();
+}
+
+// ==================== UI HELPERS ====================
+function showLoading(text) {
+    document.getElementById('loading').classList.remove('hidden');
+    document.getElementById('loading-text').textContent = text;
+    document.getElementById('status-badge').textContent = 'Working...';
+    document.getElementById('summary-section').classList.add('hidden');
+    document.getElementById('tabs-section').classList.add('hidden');
+}
+function hideLoading() {
+    document.getElementById('loading').classList.add('hidden');
+    document.getElementById('status-badge').textContent = 'Done';
+}
+function showGeocodeErrors(errors) {
+    const el = document.getElementById('geocode-errors');
+    el.classList.remove('hidden');
+    document.getElementById('geocode-error-list').innerHTML = errors.map(
+        e => `<li><b>${e.address}</b> &mdash; ${e.error}</li>`
+    ).join('');
+}
+function hideGeocodeErrors() { document.getElementById('geocode-errors').classList.add('hidden'); }
+function destroyChart(id) { if (chartInstances[id]) { chartInstances[id].destroy(); delete chartInstances[id]; } }
+
+function switchTab(name) {
+    document.querySelectorAll('.tab-btn').forEach(b => {
+        b.classList.toggle('active', b.textContent.trim().toLowerCase().includes(name));
+    });
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    document.getElementById('tab-' + name).classList.add('active');
+}
+
+// ==================== RENDER RESULTS ====================
+function renderResults(data) {
+    const r = data.result;
+    const c = data.charts;
+    const s = c.summary;
+
+    document.getElementById('s-routes').textContent = s.total_routes;
+    document.getElementById('s-assigned').textContent = s.assigned;
+    document.getElementById('s-unassigned').textContent = s.unassigned;
+    const slaEl = document.getElementById('s-sla');
+    slaEl.textContent = s.sla_pct + '%';
+    slaEl.className = 'text-2xl font-bold ' + (s.sla_pct >= 90 ? 'text-green-600' : s.sla_pct >= 70 ? 'text-yellow-500' : 'text-red-500');
+    document.getElementById('s-distance').textContent = s.total_distance_km;
+    document.getElementById('s-duration').textContent = Math.round(s.total_duration_min);
+    document.getElementById('s-time').textContent = s.opt_time_sec;
+
+    document.getElementById('summary-section').classList.remove('hidden');
+    document.getElementById('tabs-section').classList.remove('hidden');
+    document.getElementById('map-frame').src = '/api/map?' + Date.now();
+
+    // Routes table with color indicators
+    let rhtml = '';
+    r.routes.forEach((rt, i) => {
+        const clr = ROUTE_COLORS[i % ROUTE_COLORS.length];
+        rhtml += `<tr class="border-b hover:bg-gray-50">
+            <td class="px-3 py-2">
+                <span style="display:inline-block;width:14px;height:14px;background:${clr};border-radius:3px;vertical-align:middle;margin-right:6px"></span>
+                <span style="color:${clr};font-weight:bold">${rt.route_id}</span>
+            </td>
+            <td class="px-3 py-2">${rt.direction_label}</td>
+            <td class="px-3 py-2">${rt.driver_id}</td>
+            <td class="px-3 py-2">${rt.vehicle_id}</td>
+            <td class="px-3 py-2 text-center">${rt.orders_count}</td>
+            <td class="px-3 py-2 text-right">${rt.total_distance_km}</td>
+            <td class="px-3 py-2 text-right">${rt.total_duration_min}</td>
+            <td class="px-3 py-2 text-right font-bold ${rt.sla_compliance >= 90 ? 'text-green-600' : 'text-red-500'}">${rt.sla_compliance}%</td>
+        </tr>`;
+    });
+    document.getElementById('routes-table').innerHTML = rhtml;
+
+    // Stops table
+    let shtml = '';
+    r.routes.forEach((rt, i) => {
+        const clr = ROUTE_COLORS[i % ROUTE_COLORS.length];
+        rt.stops.forEach(st => {
+            const priClr = st.priority === 'HIGH' ? 'bg-red-100 text-red-700' : st.priority === 'MEDIUM' ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700';
+            shtml += `<tr class="border-b hover:bg-gray-50">
+                <td class="px-3 py-1">
+                    <span style="display:inline-block;width:10px;height:10px;background:${clr};border-radius:2px;vertical-align:middle;margin-right:4px"></span>
+                    <span style="color:${clr};font-weight:bold">${rt.route_id}</span>
+                </td>
+                <td class="px-3 py-1 text-center">${st.sequence}</td>
+                <td class="px-3 py-1 font-medium">${st.order_id}</td>
+                <td class="px-3 py-1">${st.customer_name}</td>
+                <td class="px-3 py-1 text-xs">${st.address}</td>
+                <td class="px-3 py-1 text-center"><span class="px-2 py-0.5 rounded-full text-xs font-bold ${priClr}">${st.priority}</span></td>
+                <td class="px-3 py-1 text-right font-mono">${st.arrival_time_min}</td>
+                <td class="px-3 py-1 text-right font-mono">${st.sla_deadline_min}</td>
+                <td class="px-3 py-1 text-center">${st.sla_met ? '<span class="text-green-600 font-bold">Yes</span>' : '<span class="text-red-500 font-bold">MISS</span>'}</td>
+                <td class="px-3 py-1 text-center text-xs">${st.is_return_trip ? '<span class="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Return</span>' : 'Out'}</td>
+            </tr>`;
+        });
+    });
+    document.getElementById('stops-table').innerHTML = shtml;
+    renderCharts(c);
+}
+
+function renderCharts(c) {
+    destroyChart('sla');
+    chartInstances['sla'] = new Chart(document.getElementById('chart-sla'), {
+        type:'doughnut', data:{labels:['SLA Met','SLA Missed'],datasets:[{data:[c.sla.met,c.sla.missed],backgroundColor:['#22c55e','#ef4444']}]},
+        options:{plugins:{legend:{position:'bottom'}}}
+    });
+    destroyChart('priority');
+    chartInstances['priority'] = new Chart(document.getElementById('chart-priority'), {
+        type:'bar', data:{labels:['HIGH','MEDIUM','LOW'],datasets:[{label:'Orders',data:[c.priority.HIGH,c.priority.MEDIUM,c.priority.LOW],backgroundColor:['#ef4444','#f59e0b','#22c55e']}]},
+        options:{plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{stepSize:1}}}}
+    });
+    destroyChart('routes');
+    chartInstances['routes'] = new Chart(document.getElementById('chart-routes'), {
+        type:'bar',
+        data:{
+            labels:c.routes.map(r=>r.route_id),
+            datasets:[
+                {label:'Distance (km)',data:c.routes.map(r=>r.distance_km),backgroundColor:'#3b82f6'},
+                {label:'Duration (min)',data:c.routes.map(r=>r.duration_min),backgroundColor:'#8b5cf6'},
+                {label:'Orders',data:c.routes.map(r=>r.orders),backgroundColor:'#06b6d4'},
+            ]
+        },
+        options:{scales:{y:{beginAtZero:true}},plugins:{legend:{position:'bottom'}}}
+    });
+    destroyChart('timeline');
+    chartInstances['timeline'] = new Chart(document.getElementById('chart-timeline'), {
+        type:'scatter',
+        data:{datasets:[
+            {label:'SLA Met',data:c.timeline.filter(t=>t.sla_met).map(t=>({x:t.arrival,y:t.sla_deadline})),backgroundColor:'#22c55e',pointRadius:6},
+            {label:'SLA Missed',data:c.timeline.filter(t=>!t.sla_met).map(t=>({x:t.arrival,y:t.sla_deadline})),backgroundColor:'#ef4444',pointRadius:6},
+            {label:'On-Time Line',data:[{x:0,y:0},{x:300,y:300}],type:'line',borderColor:'#94a3b8',borderDash:[5,5],pointRadius:0,fill:false}
+        ]},
+        options:{
+            scales:{x:{title:{display:true,text:'ETA / Arrival Time (min)'},beginAtZero:true},y:{title:{display:true,text:'SLA Deadline (min)'},beginAtZero:true}},
+            plugins:{legend:{position:'bottom'},tooltip:{callbacks:{label:ctx=>`ETA: ${ctx.parsed.x}min, SLA: ${ctx.parsed.y}min`}}}
+        }
+    });
+}
+
+// ==================== SIMULATION ====================
+async function runSimulation() {
+    const btn = document.getElementById('btn-sim');
+    btn.disabled = true; btn.textContent = 'Running...';
+    document.getElementById('sim-loading').classList.remove('hidden');
+    try {
+        const res = await fetch('/api/simulate', {method:'POST'});
+        const data = await res.json();
+        let html = '';
+        data.simulations.forEach(s => {
+            const slaClr = s.sla_pct >= 90 ? 'text-green-600' : s.sla_pct >= 70 ? 'text-yellow-500' : 'text-red-500';
+            html += `<tr class="border-b hover:bg-gray-50">
+                <td class="px-3 py-2 font-medium">${s.scenario}</td>
+                <td class="px-3 py-2 text-center">${s.total_orders}</td>
+                <td class="px-3 py-2 text-center">${s.drivers}</td>
+                <td class="px-3 py-2 text-center">${s.routes_created}</td>
+                <td class="px-3 py-2 text-center text-green-600 font-bold">${s.assigned}</td>
+                <td class="px-3 py-2 text-center text-red-500">${s.unassigned}</td>
+                <td class="px-3 py-2 text-right font-bold ${slaClr}">${s.sla_pct}%</td>
+                <td class="px-3 py-2 text-right">${s.total_distance_km}</td>
+                <td class="px-3 py-2 text-right">${s.opt_time_sec}s</td>
+            </tr>`;
+        });
+        document.getElementById('sim-table').innerHTML = html;
+        destroyChart('sim');
+        chartInstances['sim'] = new Chart(document.getElementById('chart-sim'), {
+            type:'bar',
+            data:{
+                labels:data.simulations.map(s=>s.scenario),
+                datasets:[
+                    {label:'SLA %',data:data.simulations.map(s=>s.sla_pct),backgroundColor:'#22c55e',yAxisID:'y'},
+                    {label:'Assigned',data:data.simulations.map(s=>s.assigned),backgroundColor:'#3b82f6',yAxisID:'y1'},
+                    {label:'Unassigned',data:data.simulations.map(s=>s.unassigned),backgroundColor:'#ef4444',yAxisID:'y1'},
+                ]
+            },
+            options:{
+                scales:{y:{type:'linear',position:'left',title:{display:true,text:'SLA %'},min:0,max:100},y1:{type:'linear',position:'right',title:{display:true,text:'Orders'},beginAtZero:true,grid:{drawOnChartArea:false}}},
+                plugins:{legend:{position:'bottom'}}
+            }
+        });
+    } catch(e) { alert('Simulation error: ' + e.message); }
+    btn.disabled = false; btn.textContent = 'Run Simulation';
+    document.getElementById('sim-loading').classList.add('hidden');
+}
+
+// Init
+renderManualTable();
+</script>
+</body>
+</html>
